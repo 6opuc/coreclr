@@ -852,6 +852,10 @@ static LPVOID VIRTUALResetMemory(
     if (st == 0)
     {
         pRetVal = lpAddress;
+		
+		// Do not include committed memory in core dump
+		WARN( "MADV_DONTDUMP\n" );
+		madvise((void *) StartBoundary, MemSize, MADV_DONTDUMP);
     }
 
     LogVaOperation(
@@ -1016,6 +1020,17 @@ static LPVOID ReserveVirtualMemory(
         return nullptr;
     }
 
+	// Do not include reserved virtual memory in core dumps
+	WARN( "MADV_DONTDUMP\n" );
+	int madviseResult = madvise(pRetVal, MemSize, MADV_DONTDUMP);
+	if (madviseResult != 0)
+	{
+		ERROR("madvise failed!\n");
+		pthrCurrent->SetLastError(ERROR_INVALID_ADDRESS);
+		munmap(pRetVal, MemSize);
+		return nullptr;
+	}
+
 #if MMAP_ANON_IGNORES_PROTECTION
     if (mprotect(pRetVal, MemSize, PROT_NONE) != 0)
     {
@@ -1168,6 +1183,14 @@ VIRTUALCommitMemory(
                 ERROR("mprotect() failed! Error(%d)=%s\n", errno, strerror(errno));
                 goto error;
             }
+
+			// Include committed memory in core dump
+			WARN( "MADV_DODUMP\n" );
+			if (madvise((void *) StartBoundary, MemSize, MADV_DODUMP) != 0)
+			{
+				ERROR("madvise() failed! Error(%d)=%s\n", errno, strerror(errno));
+				goto error;
+			}
 
             VIRTUALSetAllocState(MEM_COMMIT, runStart, runLength, pInformation);
 
@@ -1525,6 +1548,15 @@ VirtualFree(
                 goto VirtualFreeExit;
             }
 #endif  // MMAP_ANON_IGNORES_PROTECTION
+			
+			// Do not include committed memory in core dump
+			WARN( "MADV_DONTDUMP\n" );
+			if (madvise((void *) StartBoundary, MemSize, MADV_DONTDUMP) != 0)
+			{
+			    ERROR("madvise() failed! Error(%d)=%s\n", errno, strerror(errno));
+			    goto VirtualFreeExit;
+			}
+
 
             SIZE_T index = 0;
             SIZE_T nNumOfPagesToChange = 0;
@@ -1706,6 +1738,15 @@ VirtualProtect(
         {
             *lpflOldProtect = PAGE_EXECUTE_READWRITE;
         }
+
+		int advise = flNewProtect == PAGE_NOACCESS ? MADV_DONTDUMP : MADV_DODUMP;
+		WARN( advise == MADV_DONTDUMP ? "MADV_DONTDUMP\n" : "MADV_DODUMP\n" );
+		if (madvise((LPVOID)StartBoundary, MemSize, advise) != 0)
+		{
+			SetLastError( ERROR_INVALID_ADDRESS );
+			goto ExitVirtualProtect;
+		}
+
         bRetVal = TRUE;
     }
     else
