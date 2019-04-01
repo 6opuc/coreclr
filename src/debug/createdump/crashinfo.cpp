@@ -191,7 +191,10 @@ CrashInfo::GatherCrashInfo(MINIDUMP_TYPE minidumpType)
         }
         for (const MemoryRegion& region : m_otherMappings)
         {
-            InsertMemoryBackedRegion(region);
+			if ((region.Permissions() & (PF_R | PF_W | PF_X)) != 0)
+			{
+				InsertMemoryBackedRegion(region);
+			}
         }
     }
     // Add all the heap (read/write) memory regions (m_otherMappings contains the heaps)
